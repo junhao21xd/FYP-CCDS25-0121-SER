@@ -77,8 +77,9 @@ def run_gender_classifier_inference(data_path, extractor_path, model_path, outpu
     
     results_df = predict_genders(df, extractor_path, model_path)
     
-    final_csv_df = results_df[['id', 'gender_pred', 'gender_probability']]
-    final_csv_df.to_csv(output_csv, index=False)
+    # final_csv_df = results_df[['id', 'gender_pred', 'gender_probability']]
+    # final_csv_df.to_csv(output_csv, index=False)
+    results_df.to_csv(output_csv, index=False)
     
     print(f"\nPredictions successfully saved to {output_csv}")
     
@@ -98,8 +99,9 @@ def run_gender_classifier_evaluation(data_path, extractor_path, model_path, outp
     print("\nClassification Report:")
     print(classification_report(true_labels, results_df['gender_pred']))
     
-    final_csv_df = results_df[['id', 'gender_pred', 'gender_probability']]
-    final_csv_df.to_csv(output_csv, index=False)
+    # final_csv_df = results_df[['id', 'gender_pred', 'gender_probability']]
+    # final_csv_df.to_csv(output_csv, index=False)
+    results_df.to_csv(output_csv, index=False)
     
     print(f"\nPredictions successfully saved to {output_csv}")
     

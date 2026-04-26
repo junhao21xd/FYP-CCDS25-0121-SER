@@ -4,77 +4,69 @@ FLAG=1
 # Please adjust the following parameters according to your needs. Rememeber to update the MODELPATH for each LLM model.
 
 # ------  select basemodel ----------
-# MODEL_NAME='LLaMA2'
-# MODEL_NAME='LLaMA3'
-# MODEL_NAME='LLaMA3-instruct-70b'
 MODEL_NAME='LLaMA3-instruct'
-# MODEL_NAME='Phi3-medium'
-
-# ------ select the experiment ------------
-# Experiments_setting='test'
-# Experiments_setting='zero_shot'
-# Experiments_setting='few_shot'
-Experiments_setting='lora'
-# Experiments_setting='all_parameters'
 
 #  ------ select the dataset ------ 
-#dataset='iemocap'
-dataset='msp'
-# dataset='meld'
+# dataset='iemocap'
+# dataset='msp'
+dataset=${1:?"Error: Dataset name (arg 1) MUST be provided."}
 
-# ------  prompt input format setting ------ 
-audio_description='True'
-audio_impression='False'
-audio_context='True' # add audio description for the last three utterances of the context
-audio_only='False' # do not use text input
+# ------ select the experiment ------------
+# Experiments_setting='zero_shot'
+# Experiments_setting='lora_training'
+# Experiments_setting='inference'
+Experiments_setting=${2:?"Error: Experiment setting (arg 2) MUST be provided."}
 
 # ------  training setting ------ 
+if [ "$dataset" == "msp" ]; then
+    LORA_LR=1e-5
+    LORA_DIM=32
+    LORA_ALPHA=32
+    LORA_DROPOUT_PROB=0.1
+    MAX_MASK_PROB=0.1
+    historical_window=0
+
+elif [ "$dataset" == "iemocap" ]; then
+    LORA_LR=1e-4
+    LORA_DIM=16
+    LORA_ALPHA=16
+    LORA_DROPOUT_PROB=0.05
+    MAX_MASK_PROB=0.0
+    historical_window=8
+
+else
+    echo "ERROR: Invalid or missing dataset."
+fi
+
 SEED=11
-num_train_epochs=20
-LORA_LR=1e-5
-# training setting for projection-based model
-use_encoder='False' # use False for SpeechCueLLM, True for projection-based model
-projector='linear' # projector: linear, q-former
-freeze_llm='False'
-freeze_encoder='True'
-# set the accumulation and card when backwarding and inferring
+num_train_epochs=15
 accumulations=8
 graphics_card=1
 mini_batch_size=1
-BS=8
-# set the port for deepspeed: use different ports if running in parallel
-port=26000
-# name the experiment (your choice)
-task='des_context_msp_no_vad_structured_proposed_masked'
-
-#  ------ select the historical window for dataset ------ 
-# LLaMA 's context = 1024 is enough for almost dataset, except for iemocap.
-# IEMOCAP has very long conversation sample, 
-# the historical window is designed for this kind of long conversation.
-historical_window=8
+BS=$((accumulations * graphics_card * mini_batch_size))
 
 data_percent=1.0
 
-#checkpoint_dir="/path/to/experiments/LLaMA3-instruct/lora/msp/window_12/LR_1e-5_BS_8_per_1.0_des_context_msp_large_new_mask_class5_11/best"
-#checkpoint_dir="/path/to/experiments/LLaMA3-instruct/lora/iemocap/window_8/LR_1e-5_BS_8_per_1.0_des_context_iemocap_mask_sorted_class5_11/best"
-DATA_PATH="/path/to/IEMOCAP_data_audeer_finetuned"
+# set the port for deepspeed: use different ports if running in parallel
+port=26000
+
+# name the experiment (your choice)
+task="${dataset}_structured_numeric_mask_run"
+
+# Path that contains train/test json file for training/inference
+DATA_PATH="../data/${dataset}_dataset/"
+
+# Provide checkpoint_dir to load model weight to continue training or inference
+# checkpoint_dir="../models/experiments/LLaMA3-instruct/lora/msp/window_8/LR_1e-5_BS_8_per_1.0_des_context_msp_vad_pred_vad_structured_proposed_mask_new_prob_lora32_class5_11/best"
 
 # -----------------------------------------------------------------------------
-
-export HF_ACCESS_TOKEN="${HF_ACCESS_TOKEN}"
-
-python -c "
-from huggingface_hub import login
-import os
-login(token=os.getenv('HF_ACCESS_TOKEN'), new_session=False)
-"
 
 case ${MODEL_NAME} in
 'ChatGLM'|'ChatGLM2'|'LLaMA'|'LLaMA2'|'LLaMA3'|'LLaMA3-instruct'|'LLaMA3-instruct-70b'|'Bloom-560m'|'Phi3-medium')
     case ${Experiments_setting} in
-    'zero_shot'|'few_shot'|'lora'|'all_parameters')
+    'zero_shot'|'lora_training'|'inference')
         case ${dataset} in
-        'iemocap'|'meld'|'msp')
+        'iemocap'|'msp')
             echo "******************************************************************************************"
             echo "All parameters are valid."
             echo "The dataset you have selected is: ${dataset} !"
@@ -108,10 +100,7 @@ then
     then
         # MAX_LENGTH=1200
         MAX_LENGTH=2500
-    elif [ ${dataset} = 'meld' ]
-    then
-        #MAX_LENGTH=1024
-        MAX_LENGTH=1500
+
     elif [ ${dataset} = 'msp' ]
     then
         #MAX_LENGTH=1024
@@ -125,27 +114,12 @@ then
     echo "******************************************************************************************"
 
 
-    if [ ${MODEL_NAME} = 'ChatGLM' ]
-    then
-        MODEL_PATH='CHATGLM MODELPATH'
-    elif [ ${MODEL_NAME} = 'LLaMA' ]
-    then
-        MODEL_PATH='LLaMA MODELPATH'
-    elif [ ${MODEL_NAME} = 'LLaMA2' ]
-    then
-        MODEL_PATH='LLaMA2 MODELPATH'
-    elif [ ${MODEL_NAME} = 'LLaMA3' ]
-    then
-        MODEL_PATH='LLaMA3 MODELPATH'
-    elif [ ${MODEL_NAME} = 'LLaMA3-instruct' ]
+    if [ ${MODEL_NAME} = 'LLaMA3-instruct' ]
     then
         MODEL_PATH='meta-llama/Meta-Llama-3-8B-Instruct'
     elif [ ${MODEL_NAME} = 'LLaMA3-instruct-70b' ]
     then
         MODEL_PATH='LLaMA3-instruct-70b MODELPATH'
-    elif [ ${MODEL_NAME} = 'Phi3-medium' ]    
-    then
-        MODEL_PATH='Phi3-medium MODELPATH'
     else
         echo -e "Your choose is not in MY candidations! Please check your Model name!"
     fi
@@ -158,55 +132,54 @@ then
         DO_TRAIN=False
         LORA=False
         LR=0
-        CHECKPOINT_DIR=None
+	    ZERO_SHOT=True
         echo -e "Your choose ${Experiments_setting}! The experiment will be set as ZERO_SHOT model"
-    elif [ ${Experiments_setting} = 'few_shot' ]
-    then
-        DO_EVAL=True
-        DO_TRAIN=False
-        LORA=False
-        LR=0
-        CHECKPOINT_DIR=None
-        echo -e "Your choose ${Experiments_setting}! The experiment will be set as FEW_SHOT model"
-    elif [ ${Experiments_setting} = 'lora' ]
+    elif [ ${Experiments_setting} = 'lora_training' ]
     then
         DO_EVAL=True
         DO_TRAIN=True
         LORA=True
         LR=${LORA_LR}
-        CHECKPOINT_DIR=None
+        ZERO_SHOT=False
         echo -e "Your choose ${Experiments_setting}! The experiment will be set as LORA model"
-    elif [ ${Experiments_setting} = 'all_parameters' ]
+    elif [ ${Experiments_setting} = 'inference' ]
     then
         DO_EVAL=True
-        DO_TRAIN=True
-        LORA=False
-        LR=2e-5
-        CHECKPOINT_DIR=None
-        echo -e "Your choose ${Experiments_setting}! The experiment will be set as ALL_PARAMETERS model"
+        DO_TRAIN=False
+        LORA=True
+        LR=${LORA_LR}
+        ZERO_SHOT=False
+        echo -e "Your choose ${Experiments_setting}! The experiment will be set as inferencing"
     else
         echo -e "Your choose is not in MY candidations! Please CHECK your Experiments Setting!"
     fi
-    
+
+    export CUDA_VISIBLE_DEVICES=0
+    VENV_LLM="../venv_llm/bin/python3"
+
     echo "Processed Data_Path: $DATA_PATH"
-    deepspeed --master_port=${port} main_train.py \
+    "$VENV_LLM" deepspeed --master_port=${port} main.py \
     --dataset ${dataset} \
     --model_name_or_path ${MODEL_PATH} \
     --data_dir ${DATA_PATH} \
-    --output_dir ../experiments/${MODEL_NAME}/${Experiments_setting}/${dataset}/window_${historical_window}/LR_${LR}_BS_${BS}_per_${data_percent}_${task}_class5_${SEED} \
+    --output_dir ../experiments/${MODEL_NAME}/${Experiments_setting}/${dataset}/evaluation_${task}_${SEED} \
     --max_length ${MAX_LENGTH} \
     --batch_size ${BS} \
-    --deepspeed_config ../LLM_code/data_utils/deepspeed_config.json \
+    --deepspeed_config ./LLM_code/llm_data_utils/deepspeed_config.json \
     --gradient_accumulation_steps ${accumulations} \
     --eval_batch_size 8 \
     --num_train_epochs ${num_train_epochs} \
-    --save_steps 980 \
+    --save_steps 900 \
     --lora ${LORA}\
     --learning_rate ${LR} \
-    --do_eval ${DO_EVAL} \
+    --lora_dim ${LORA_DIM} \
+    --lora_alpha ${LORA_ALPHA} \
+    --lora_dropout ${LORA_DROPOUT_PROB} \
+    --max_mask_prob ${MAX_MASK_PROB} \
     --do_train ${DO_TRAIN} \
-    --statistic_mode True \
+    --do_eval ${DO_EVAL} \
     --data_percent ${data_percent} \
-    --seed ${SEED}
-
+    --seed ${SEED} \
+    --zero_shot ${ZERO_SHOT} \
+    --checkpoint_dir ${checkpoint_dir}
 fi

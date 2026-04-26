@@ -1,2 +1,5 @@
 from .whisper_asr import run_asr
 from .gender_classifier import train_gender_classifier, run_gender_classifier_inference, run_gender_classifier_evaluation
+from .audeering_vad_regressor import preprocess_iemocap_audeering, preprocess_msp_audeering, train_audeering, evaluate_audeering, inference_audeering
+from .egemaps_extractor import extract_feature_opensmile, process_audio_feature
+from .combine_file import combine_file_before_feature_extraction

@@ -4,57 +4,8 @@ from datasets import Dataset, Audio, DatasetDict, ClassLabel
 from transformers import AutoFeatureExtractor, AutoModelForAudioClassification, TrainingArguments, Trainer
 import evaluate
 import librosa
+from configs.dataset_config import GENDER_CLASSIFIER_CONFIGS
 
-
-DATASET_CONFIGS = {
-    "iemocap": {
-        "eval_strategy":"epoch",
-        "save_strategy":"epoch",
-        "logging_steps":10,
-        "learning_rate":3e-5,            
-        "per_device_train_batch_size":8, 
-        "per_device_eval_batch_size":8,
-        "num_train_epochs":5,
-        "load_best_model_at_end":True,
-        "metric_for_best_model":"accuracy",
-        "save_total_limit":1,
-        "gradient_checkpointing":True
-    },
-    
-    "msp": {
-        "eval_strategy":"epoch",
-        "save_strategy":"epoch",
-        "logging_steps":10,
-        "learning_rate":3e-5,            
-        "per_device_train_batch_size":8, 
-        "per_device_eval_batch_size":8,
-        "num_train_epochs":5,
-        "load_best_model_at_end":True,
-        "metric_for_best_model":"accuracy",
-        "save_total_limit":1,
-        "gradient_checkpointing":True,
-        "max_grad_norm":1.0,       
-        "warmup_ratio":0.1,     
-        "weight_decay":0.01,
-    },
-    
-    "default": {
-        "eval_strategy":"epoch",
-        "save_strategy":"epoch",
-        "logging_steps":10,
-        "learning_rate":1e-5,            
-        "per_device_train_batch_size":8, 
-        "per_device_eval_batch_size":8,
-        "num_train_epochs":5,
-        "load_best_model_at_end":True,
-        "metric_for_best_model":"accuracy",
-        "save_total_limit":1,
-        "gradient_checkpointing":True,
-        "max_grad_norm":1.0,       
-        "warmup_ratio":0.1,     
-        "weight_decay":0.01,
-    }
-}
 
 def df_to_hf_dataset(data_path):
     df = pd.read_csv(data_path)
@@ -97,7 +48,7 @@ def preprocess_function(examples, feature_extractor):
 
 
 def train_gender_classifier(dataset, data_path, feature_extractor_path, model_checkpoint):
-    finetuned_model_path = f"./wav2vec2-gender-best-model_{dataset}"
+    finetuned_model_path = f"../checkpoints/wav2vec2-gender-best-model_{dataset}"
     hf_dataset = df_to_hf_dataset(data_path)
     
     labels = sorted(hf_dataset["train"].unique("gender"))
@@ -130,11 +81,11 @@ def train_gender_classifier(dataset, data_path, feature_extractor_path, model_ch
         id2label=id2label
     )
 
-    current_config = DATASET_CONFIGS.get(dataset, DATASET_CONFIGS["DEFAULT"])
+    current_config = GENDER_CLASSIFIER_CONFIGS.get(dataset, GENDER_CLASSIFIER_CONFIGS["DEFAULT"])
     
     # 9. Define Training Arguments
     training_args = TrainingArguments(
-        output_dir=f"./wav2vec2-gender-classifier_{dataset}",
+        output_dir=f"../checkpoints/wav2vec2-gender-classifier_{dataset}",
         **current_config
     )
 

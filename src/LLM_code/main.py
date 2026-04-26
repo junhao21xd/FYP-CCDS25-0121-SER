@@ -27,7 +27,7 @@ import re
 import warnings
 from torch.utils.data import DataLoader, Dataset, RandomSampler, SequentialSampler
 import numpy as np
-from data_utils.data_utils import *
+from llm_data_utils.data_utils import *
 from deepspeed.ops.adam import DeepSpeedCPUAdam, FusedAdam
 from torch.optim import AdamW, Adam
 from typing import List, Dict
@@ -35,11 +35,26 @@ from peft import LoraConfig, get_peft_model
 import argparse
 from deepspeed.utils.zero_to_fp32 import load_state_dict_from_zero_checkpoint
 
+from dotenv import load_dotenv
+from huggingface_hub import login
+
 # packages for ERC
 from sklearn import metrics
 from sklearn.metrics import accuracy_score, f1_score
 
 import shutil
+from configs.dataset_config import DATASET_PROMPT_GROUPS
+ 
+"""Loads environment variables and authenticates with Hugging Face."""
+load_dotenv()
+token = os.getenv("HF_ACCESS_TOKEN")
+
+if not token:
+    # It's better to raise an error early than fail later during model loading
+    raise ValueError("HF_ACCESS_TOKEN not found. Check your .env file.")
+
+login(token=token, new_session=False)
+    
 # evaluation function for ERC
 def get_labels_attr(dataset):
     label_list_set = {
@@ -147,121 +162,75 @@ world_size = int(os.getenv("WORLD_SIZE", '1'))
 parser = argparse.ArgumentParser()
 
 parser.add_argument(
-    "--dataset",
-    type=str,
-    required=True,
-    choices=['iemocap','meld','EmoryNLP','msp'],
-    help="Datasets that need to be evaluated"
+    "--dataset", type=str, required=True, choices=['iemocap','msp'], help="Datasets that need to be evaluated"
 )
 
 parser.add_argument(
-    "--data_dir",
-    type=str,
-    required=True,
-    help="The input data dir. Should contain the source and target files for the task.",
+    "--data_dir", type=str, required=True, help="The input data dir. Should contain the source and target files for the task.",
 )
 parser.add_argument(
-    "--model_name_or_path",
-    type=str,
-    required=True,
-    help="Path to pretrained model or model identifier from huggingface.co/models",
+    "--model_name_or_path", type=str, required=True, help="Path to pretrained model or model identifier from huggingface.co/models",
 )
 
 parser.add_argument(
-    "--checkpoint_dir",
-    type=str,
-    default=None,
-    help="Path to the fine-tuned model checkpoint.",
+    "--checkpoint_dir", type=str, default=None, help="Path to the fine-tuned model checkpoint.",
 )
 
 parser.add_argument(
-    "--gradient_checkpointing",
-    action='store_true'
+    "--gradient_checkpointing", action='store_true'
 )
 
 parser.add_argument(
-    "--output_dir",
-    type=str,
-    required=True,
-    help="Path to save trained model.",
+    "--output_dir", type=str, required=True, help="Path to save trained model.",
 )
 
 parser.add_argument(
-    "--mode",
-    type=str,
-    default="sft"
+    "--mode", type=str, default="sft"
 )
 
 parser.add_argument(
-    "--deepspeed_config",
-    type=str,
-    default="./data_utils/deepspeed_config.json",
-    help="Path to save trained model.",
+    "--deepspeed_config", type=str, default="./llm_data_utils/deepspeed_config.json", help="Path to save trained model.",
 )
 
 parser.add_argument(
-    "--num_train_epochs",
-    default=10,
-    type=int,
-    help="Number of training epochs.",
+    "--num_train_epochs", default=10, type=int, help="Number of training epochs.",
 )
 parser.add_argument(
-    "--gradient_accumulation_steps",
-    default=1, type=int,
-    help="gradient accumulation steps",
+    "--gradient_accumulation_steps", default=1, type=int, help="gradient accumulation steps",
 )
 
 parser.add_argument(
-    "--warmup_ratio",
-    default=0.1,
-    type=float,
-    help="The ratio of warmup.",
+    "--warmup_ratio", default=0.1, type=float, help="The ratio of warmup.",
 )
 parser.add_argument(
-    '--local_rank', 
-    default=-1
+    '--local_rank', default=-1
 )
 parser.add_argument(
-    "--warmup_steps",
-    default=None,
-    type=int
+    "--warmup_steps", default=None, type=int
 )
 
 parser.add_argument(
-    "--learning_rate",
-    default=3e-5,
-    type=float
+    "--learning_rate", default=3e-5, type=float
 )
 parser.add_argument(
-    "--max_seq_length",
-    default=256, type=int,
-    help="Max output seq length",
+    "--max_seq_length", default=256, type=int, help="Max output seq length",
 )
 parser.add_argument(
-    "--max_length",
-    default=2048, type=int,
-    help="Max output seq length",
+    "--max_length", default=2048, type=int, help="Max output seq length",
 )
 parser.add_argument(
-    '--weight_decay',
-    default=0.0, type=float,
-    help='weight decay when updating parameters.'
+    '--weight_decay', default=0.0, type=float, help='weight decay when updating parameters.'
 )
 
 parser.add_argument(
-    '--save_steps',
-    default=1000, type=int,
+    '--save_steps', default=1000, type=int,
 )
 parser.add_argument(
-    "--zero_shot",
-    default=True
-    # action='store_true',
+    "--zero_shot", default=False
 )
 
 parser.add_argument(
-    "--lora",
-    default=False
-    # type=bool,
+    "--lora", default=False
 )
 parser.add_argument(
     "--lora_dim", type=int, default=32, # msp val = 32
@@ -273,105 +242,78 @@ parser.add_argument(
     "--lora_dropout", type=float, default=0.1, # msp val = 0.1
 )
 parser.add_argument(
+    "--max_mask_prob", type=float, default=0.1
+)
+parser.add_argument(
     "--lora_module_name", type=str, default='q_proj,k_proj,v_proj,query_key_value',
 )
 parser.add_argument(
-    "--batch_size",
-    default=32,
-    type=int
+    "--batch_size", default=32, type=int
 )
 parser.add_argument(
-    "--eval_batch_size",
-    default=4,
-    type=int
+    "--eval_batch_size", default=4, type=int
 )
 parser.add_argument(
-    "--top_k",
-    default=None,
-    type=int
+    "--top_k", default=None, type=int
 )
 parser.add_argument(
-    "--num_beams",
-    default=1,
-    type=int
+    "--num_beams", default=1, type=int
 )
 parser.add_argument(
-    "--seed",
-    default=42,
-    type=int
+    "--seed", default=42, type=int
 )
 
 parser.add_argument(
-    "--top_p",
-    type=float,
-    default=None
+    "--top_p", type=float, default=None
 )
 
 parser.add_argument(
-    "--clip_norm",
-    type=float,
-    default=1.0
+    "--clip_norm", type=float, default=1.0
 )
 
 parser.add_argument(
-    "--temp",
-    type=float,
-    default=None,
-    help='Temperature for model generation.'
+    "--temp", type=float, default=None, help='Temperature for model generation.'
 )
 parser.add_argument(
-    "--do_train",
-    default=False,
-    # action='store_true',
+    "--do_train", default=False,
 )
 parser.add_argument(
-    "--do_eval",
-    default=False,
-    # action='store_true'
+    "--do_eval", default=False,
 )
 parser.add_argument(
-    "--few_shot",
-    type=bool,
+    "--few_shot", type=bool, default=False
+)
+
+parser.add_argument(
+    '--statistic_mode', default='True'
+)
+parser.add_argument(
+    "--offload_optimizer", action='store_true'
+)
+
+parser.add_argument( "--emotion_prediction",
     default=False
 )
 
 parser.add_argument(
-    '--statistic_mode',
-    default='True'
-)
-parser.add_argument(
-    "--offload_optimizer",
-    action='store_true'
+    "--data_percent", default=1.0, type=float
 )
 
 parser.add_argument(
-    "--emotion_prediction",
-    default=False
+    "--beta", default=1.0, help='hyperparameter that determining the emotion prediction weights participating in the final loss'
 )
 
 parser.add_argument(
-    "--data_percent",
-    default=1.0,
-    type=float
+    "--theta", default=1.0, help='hyperparameter that determining the KL divergency weights participating in the final loss'
 )
 
 parser.add_argument(
-    "--beta",
-    default=1.0,
-    help='hyperparameter that determining the emotion prediction weights participating in the final loss'
+    "--feature", default='text'
 )
 
 parser.add_argument(
-    "--theta",
-    default=1.0,
-    help='hyperparameter that determining the KL divergency weights participating in the final loss'
+    "--save_training_checkpoint", default=False
 )
-
-parser.add_argument(
-    "--feature",
-    default='text'
-)
-
 args = parser.parse_args()
 do_sample = args.top_k is not None or args.top_p is not None or args.num_beams > 1 or args.temp is not None
 '''
@@ -405,6 +347,11 @@ if args.lora == 'True':
 else:
     args.lora = False
 
+if args.zero_shot == 'True':
+    args.zero_shot = True
+else:
+    args.zero_shot = False
+    
 # eval_result_path = args.eval_result_path if args.eval_result_path is not None else args.output_dir
 # os.makedirs(eval_result_path, exist_ok=True)
 # pdb.set_trace()
@@ -430,6 +377,7 @@ model_args = {
     "lora_dim": args.lora_dim,
     "lora_dropout": args.lora_dropout,
     "lora_alpha": args.lora_alpha,
+    "max_mask_prob": args.max_mask_prob,
     "lora_module_name": args.lora_module_name,
     "num_beams": args.num_beams,
     "top_k": args.top_k,
@@ -448,13 +396,12 @@ model_args = {
     "theta": args.theta,
     "gradient_checkpointing": args.gradient_checkpointing,
     "data_percent": args.data_percent,
-    "feature": args.feature
+    "feature": args.feature,
+    "save_training_checkpoint": args.save_training_checkpoint
 }
 args = ModelArgs()
-# pdb.set_trace()
 
 args.update(model_args)
-# pdb.set_trace()
 
 print(args)
 
@@ -479,8 +426,6 @@ with open(args.deepspeed_config, 'r', encoding='utf-8') as f:
     deepspeed_config = json.load(f)
 deepspeed_config["train_batch_size"] = args.batch_size
 deepspeed_config["gradient_accumulation_steps"] = args.gradient_accumulation_steps
-#if "train_batch_size" in deepspeed_config:
-#    del deepspeed_config["train_batch_size"]
 if deepspeed_config["zero_optimization"]["stage"] == 3:
     deepspeed_config["zero_optimization"]['mics_shard_size'] = world_size
 def getOptimizerGroup(model):
@@ -508,29 +453,6 @@ def getOptimizerGroup(model):
     
     return optimizer_grouped_parameters
 
-def _get_pred_input_dict(batch):
-    # print(batch["input_ids"].shape,batch["labels"].shape,batch["attention_mask"].shape)
-    batch['input_ids'] = batch['input_ids'].unsqueeze(1)
-    batch['labels'] = batch['labels'].unsqueeze(1)
-    batch['attention_mask'] = batch['attention_mask'].unsqueeze(1)
-    batch['type_token_ids'] = batch['type_token_ids'].unsqueeze(1)
-    input_ids, labels, attention_mask, type_token_ids = batch["input_ids"][0], \
-        batch["labels"][0], batch["attention_mask"][0], batch["type_token_ids"][0]
-    
-    pred_input_ids, pred_labels, pred_attention_mask, pred_type_token_ids = batch["input_ids"][1], \
-        batch["labels"][1], batch["attention_mask"][1], batch["type_token_ids"][1]
-     
-    
-    return {
-        "input_ids": input_ids.to(device),
-        "labels": labels.to(device),
-        "attention_mask": attention_mask.to(device) 
-    },{
-        "input_ids": pred_input_ids.to(device),
-        "labels": pred_labels.to(device),
-        "attention_mask": pred_attention_mask.to(device) 
-    }
-
 def _get_input_dict(batch):
     input_ids, labels, attention_mask = batch["input_ids"], batch["labels"], batch["attention_mask"]
     
@@ -542,93 +464,11 @@ def _get_input_dict(batch):
     }
 
 if args.dataset == 'msp':
-    group_order = {
-        "Pitch (F0)": [
-            'Average Pitch',
-            'Pitch Stability (StdDev)'
-        ],
-        "Loudness": [
-            'Average Loudness', 'Overall Sound Level (dBP)',
-            'Loudness Range', 'Loudness Variation (StdDev)',
-            'Avg. Loudness Decrease Slope', 'Avg. Loudness Increase Slope',
-            'Loudness Peaks per Second', 'Loudness 20th Percentile',
-            'Loudness Decrease Variability'
-        ],
-        "Spectral / Formant Related": [
-            'Spectral Slope (500-1500 Hz)', 'Spectral Flux (Timbre Change)',
-            'Spectral Flux (Unvoiced Regions)', 'Spectral Flux Variation (Voiced)',
-            'Alpha Ratio (Spectral Balance)', 'F1 Frequency (Avg)',
-            'Hammarberg Index (Voice Sharpness)'
-        ],
-        "Pace & Timing": [
-            'Speaking Rate', 'Avg. Unvoiced Length',
-            'Unvoiced Length Variation', 'Voiced Length Variation (StdDev)'
-        ],
-        "Voice Quality": [
-            'MFCC 1 (Spectral Shape)', 'Harmonic-Formant Diff (H1-A3)',
-            'Jitter (Voice Roughness)', 'Shimmer (Voice Breathiness)'
-        ],
-    }
-
-elif args.dataset == 'iemocap':
-    group_order = {
-    "Pitch (Intonation)": [
-        'Average Pitch',
-        'Pitch Stability (StdDev)',
-        'Pitch Range (Dynamic Range)',
-    ],
-
-    "Loudness (Energy)": [
-        'Average Loudness',
-        'Overall Sound Level (dBP)',
-        'Loudness Variation (StdDev)',
-        'Avg. Loudness Increase Slope',
-        'Loudness Decrease Variability',
-    ],
-
-    "Rhythm & Speed": [
-        'Speaking Rate',
-        'Unvoiced Length Variation (Pause/Consonant Variability)',
-    ],
-
-    "Voice Quality (Roughness/Breathiness)": [
-        'Jitter (Voice Roughness)',
-        'Shimmer (Voice Breathiness)',
-        'Harmonics-to-Noise Ratio (Voice Clarity)',
-        'Hammarberg Variation (Breathiness Stability)',
-    ],
-
-    "Spectral Balance (Timbre & Tone)": [
-        'Alpha Ratio (Spectral Balance - Voiced)',
-        'Alpha Ratio (Spectral Balance - Unvoiced)',
-        'Low Freq Spectral Slope (Voiced)',
-        'Low Freq Spectral Slope (Unvoiced)',
-        'Overall Spectral Flux Variation',
-        'Spectral Flux Variation (Voiced)',
-    ],
-
-    "Formants (Vowel Articulation)": [
-        'F1 Frequency (Vowel Openness)',
-        'F1 Amplitude (Relative to Pitch)',
-    ],
-
-    "MFCCs (Abstract Spectral Shape)": [
-        'MFCC 1 (Overall Spectral Shape)',
-        'MFCC 1 (Voiced Spectral Shape)',
-        'MFCC 1 Variation (Overall)',
-        'MFCC 1 Variation (Voiced)',
-        'MFCC 2 (Voiced Spectral Energy)',
-        'MFCC 4 (Overall High-Freq Detail)',
-        'MFCC 4 (Voiced High-Freq Detail)',
-    ],
-}
-
-if args.dataset == 'msp':
     label_set_str = 'angry, frustrated, disgust, annoyed, sad, depressed, disappointed, fear, happy, surprise, excited, contempt, amused, concerned, confused, neutral'
     vad_keys = {
-        'EmoVal': 'Valence', 
-        'EmoAct': 'Arousal', 
-        'EmoDom': 'Dominance'
+        'valence': 'Valence', 
+        'arousal': 'Arousal', 
+        'dominance': 'Dominance'
     }
     max_VAD = 7
     
@@ -653,13 +493,14 @@ class RawJsonDataset(Dataset):
 
 # --- 3. DYNAMIC COLLATOR FOR LLAMA 3 ---
 class DynamicPromptCollator:
-    def __init__(self, tokenizer, group_order, max_len=2048, mode='train'):
+    def __init__(self, tokenizer, group_order, max_mask_prob, dataset, max_len=2048, mode='train'):
         self.tokenizer = tokenizer
         self.group_order = group_order  # Now accepts the nested dictionary
         self.max_len = max_len
         self.mode = mode
         self.epoch = 0
-        self.max_mask_prob = 0.1 
+        self.max_mask_prob = max_mask_prob 
+        self.dataset = dataset
         
         self.tokenizer.padding_side = 'left'
 
@@ -671,14 +512,12 @@ class DynamicPromptCollator:
         self.epoch = epoch
 
     def __call__(self, batch):
+        ids = [feature["id"] for feature in batch]
         # 1. Masking Probability (Curriculum Learning)
         if self.mode == 'train':
-            linear_increase = self.epoch * (0.11 / 15)
-
-            # 2. Add baseline (0.01) and Cap at 0.12
-            #mask_prob = min(0.12, 0.01 + linear_increase)
             mask_prob = min(self.max_mask_prob, self.epoch * (0.20 / 15))
-            #mask_prob = 0.3
+            vad_mask_prob = 0.5
+            
         else:
             mask_prob = 0.0
 
@@ -686,83 +525,75 @@ class DynamicPromptCollator:
         labels_list = []
         attention_mask_list = []
 
-        
-        #altered = False
         for idx, item in enumerate(batch):
-            #if idx == 0 and self.mode == 'dev':
-            #    print("First item:", item)
             transcript = item.get('utterance', '')
             target_label = item.get('output', '')
             convo_history = item.get('history_context', 'No context available.')
             
             # --- BUILD PROMPT ---
             desc_parts = []
-            
-            #for key, name in vad_keys.items():
-            #    if key in item:
-            #        # Get the value (e.g. "5.5/7")
-            #        val = f"{item[key]}/{max_VAD}"
-                    
-            #        # Apply Masking Logic (Same as acoustics)
-            #        if self.mode == 'train' and random.random() < mask_prob:
-            #            altered = True
-            #            val = "Unknown"
+                
+            for key, name in vad_keys.items():
+                if key in item:
+                    pred_key = f"pred_{key}"
+
+                    if self.mode == 'dev' or random.random() < vad_mask_prob:
+                        raw_val = float(item[pred_key])
+                    else:
+                        base_val = float(item[key])
+                        noise = random.choice([-0.2, -0.1, 0.0, 0.1, 0.2])
+                        raw_val = base_val + noise 
+                        raw_val = max(1.0, min(max_VAD, raw_val))
+
+                        # Apply Masking Logic (Same as acoustics)
+                    if self.mode == 'train' and random.random() < mask_prob:
+                        val_str = "Unknown"
                         
-            #        desc_parts.append(f"{name}: {val}")
+                    val_str = "{:.1f}".format(raw_val)
+                    desc_parts.append(f"{name}: {val_str}/{max_VAD}")
 
             # 2. Acoustics (Grouped Logic)
-            # We iterate through your group_order keys (Pitch, Loudness, etc.)
             for group_name, feature_list in self.group_order.items():
-                
-                # Buffer lines for this group so we don't print empty headers
                 group_lines = []
                 
                 for feature_name in feature_list:
-                    # Construct the column name matching your data: "Average Pitch_category"
                     col_name = f"{feature_name}_category"
-                    
-                    # Get value
-                    val = item.get(col_name, None)
-                    
-                    # Apply your filter logic: must exist and not be 'none'
+                    val = item.get(col_name, None)                    
                     if val is not None and str(val).lower() != 'none' and val != "":
-                        
-                        # --- MASKING LOGIC (The "Dropout") ---
-                        # Randomly replace the value with "Unknown"
                         if self.mode == 'train' and random.random() < mask_prob:
-                            altered = True
                             val = "Unknown"
-                        
                         group_lines.append(f"{feature_name}: {val}")
                 
-                # Only append the header if we actually have features for this group
                 if group_lines:
                     desc_parts.append(f"--- {group_name} ---")
                     desc_parts.extend(group_lines)
             
             description_str = "\n".join(desc_parts)
 
-            # 3. Construct Final String
-            prompt_text = (
-                f"Now you are expert of sentiment and emotional analysis.\n"
-                f"The following conversation noted between \'### ###\' involves several speakers. "
-                f"The last three utterances are followed by its speech features. ### "
-                f"{convo_history}"
-                f" ###\n"
-                f"Target speech characteristics:\n"
-                f"{description_str}\n"
-                f"Transcript: \"{transcript}\"\n"
-                f"Please select the emotional label of the transcript from <{label_set_str}> "
-                f"based on both the context and audio features. Respond with just one label:"
-            )
-            #if altered == True:
-            #    print("DEBUG — FIRST PROMPT:")
-            #    print(prompt_text)
-            #altered = False
-            
-            #if idx == 0 and self.mode == 'dev':
-            #    print(f"Debugging Dev: \n")
-            #    print(prompt_text)
+            if self.dataset=="msp":
+                prompt_text = (
+                    f"Now you are expert of sentiment and emotional analysis.\n"
+                    f"{convo_history}"
+                    f"Target speech characteristics:\n"
+                    f"{description_str}\n"
+                    f"Transcript: \"{transcript}\"\n"
+                    f"Please select the emotional label of the transcript from <{label_set_str}> "
+                    f"based on both the context and audio features. Respond with just one label:"
+                )
+           
+            elif self.dataset=='iemocap':
+                prompt_text = (
+                    f"Now you are expert of sentiment and emotional analysis.\n"
+                    f"The following conversation noted between \'### ###\' involves several speakers. "
+                    f"The last three utterances are followed by its speech features. ### "
+                    f"{convo_history}"
+                    f" ###\n"
+                    f"Target speech characteristics:\n"
+                    f"{description_str}\n"
+                    f"Transcript: \"{transcript}\"\n"
+                    f"Please select the emotional label of the transcript from <{label_set_str}> "
+                    f"based on both the context and audio features. Respond with just one label:"
+                )
             
             # --- TOKENIZATION (Standard Llama 3 Logic) ---
             prompt_ids = self.tokenizer.encode(prompt_text, add_special_tokens=True)
@@ -778,70 +609,12 @@ class DynamicPromptCollator:
 
             # Truncation
             if len(full_ids) > self.max_len:
-                # DEBUG: Show prompt AFTER tokenizer.encode (decode back)
-                #print("=== Prompt After Encoding-Decoding ===")
-                #print(self.tokenizer.decode(prompt_ids))
-
-                # DEBUG: Full sequence before truncation
-                #print("=== Full (prompt + answer) ===")
-                #print(self.tokenizer.decode(full_ids))
-                #print("Full token length:", len(full_ids))
-                diff = len(full_ids) - self.max_len
                 full_ids = full_ids[:self.max_len]
-                # full_ids = full_ids[diff:]
-                #labels = labels[diff:]
                 labels = labels[:self.max_len]
             input_ids_list.append(torch.tensor(full_ids, dtype=torch.long))
             labels_list.append(torch.tensor(labels, dtype=torch.long))
             attention_mask_list.append(torch.ones(len(full_ids), dtype=torch.long))
        
-        # Padding
-        #input_ids_padded = torch.nn.utils.rnn.pad_sequence(
-        #    input_ids_list, batch_first=True, padding_value=self.tokenizer.pad_token_id
-        #)
-        #labels_padded = torch.nn.utils.rnn.pad_sequence(
-        #    labels_list, batch_first=True, padding_value=-100
-        #)
-        #attention_mask_padded = torch.nn.utils.rnn.pad_sequence(
-        #    attention_mask_list, batch_first=True, padding_value=0
-        #)
-
-        #def pad_tensors(tensor_list, pad_id, padding_side='right'):
-        #    if padding_side == 'right':
-        #        return torch.nn.utils.rnn.pad_sequence(
-        #            tensor_list, batch_first=True, padding_value=pad_id
-        #        )
-        #    else: # Left Padding
-                # Flip, Pad (right), Flip back
-        #        reversed_list = [t.flip(0) for t in tensor_list]
-        #        padded_reversed = torch.nn.utils.rnn.pad_sequence(
-        #            reversed_list, batch_first=True, padding_value=pad_id
-        #        )
-        #        return padded_reversed.flip(1)
-
-        # 1. Determine Padding Side
-        # Llama 3 (Causal LM) generation REQUIRES Left Padding
-        # Training usually works fine with Right Padding
-        #padding_side = 'left' if self.mode == 'dev' else 'right'
-
-        #input_ids_padded = pad_tensors(
-        #    input_ids_list, 
-        #    self.tokenizer.pad_token_id, 
-        #    padding_side=padding_side
-        #)
-
-        #labels_padded = pad_tensors(
-        #    labels_list, 
-        #    -100, 
-        #    padding_side=padding_side
-        #)
-
-        # 4. Pad Attention Mask (Always 0)
-        #attention_mask_padded = pad_tensors(
-        #    attention_mask_list, 
-        #    0, 
-        #    padding_side=padding_side
-        #)
         
         def left_pad_tensors(tensor_list, pad_val):
             reversed_list = [t.flip(0) for t in tensor_list]
@@ -849,14 +622,6 @@ class DynamicPromptCollator:
                 reversed_list, batch_first=True, padding_value=pad_val
             )
             return padded_reversed.flip(1)
-            #max_len = max(t.size(0) for t in tensor_list)
-            #padded = []
-            #for t in tensor_list:
-            #    pad_len = max_len - t.size(0)
-            #    padded.append(
-            #        torch.cat([torch.full((pad_len,), pad_val, dtype=t.dtype), t], dim=0)
-            #    )
-            #return torch.stack(padded, dim=0)
         
         # Apply Left Padding to everything
         input_ids_padded = left_pad_tensors(input_ids_list, self.tokenizer.pad_token_id)
@@ -866,7 +631,8 @@ class DynamicPromptCollator:
         return {
             "input_ids": input_ids_padded,
             "labels": labels_padded,
-            "attention_mask": attention_mask_padded
+            "attention_mask": attention_mask_padded,
+            "id": ids
         }
         
 ## prepare model
@@ -897,11 +663,6 @@ if args.gradient_checkpointing:
     model.gradient_checkpointing_enable()
     model.enable_input_require_grads()
 
-# if args.checkpoint_dir is not None:
-#     from deepspeed.utils.zero_to_fp32 import load_state_dict_from_zero_checkpoint
-
-#     model = load_state_dict_from_zero_checkpoint(model, args.checkpoint_dir)
-
 
 num_parameters = get_parameter_number(model)
 with open(os.path.join(args.output_dir, "model_params.json"), 'w', encoding='utf-8') as f:
@@ -923,9 +684,12 @@ if args.do_train:
             
     # --- CHANGED: Use RawJsonDataset and DynamicPromptCollator ---
     train_dataset = RawJsonDataset(df_train, mode='train')
+    group_order = DATASET_PROMPT_GROUPS[args.dataset]
     train_collator = DynamicPromptCollator(
         tokenizer, 
-        group_order, 
+        group_order,
+        args.max_mask_prob,
+        args.dataset, 
         max_len=args.max_length, 
         mode='train'
     )
@@ -937,9 +701,12 @@ if args.do_eval:
 
     # --- CHANGED: Use RawJsonDataset and DynamicPromptCollator ---
     dev_dataset = RawJsonDataset(df_dev, mode='dev')
+    group_order = DATASET_PROMPT_GROUPS[args.dataset]
     dev_collator = DynamicPromptCollator(
         tokenizer, 
-        group_order, 
+        group_order,
+        args.max_mask_prob,
+        args.dataset,
         max_len=args.max_length, 
         mode='dev'
     )
@@ -983,7 +750,6 @@ if args.do_train:
     if args.checkpoint_dir is not None:
         load_path, client_state = model_engine.load_checkpoint(args.checkpoint_dir) 
         print("checkpoint_dir is provided")
-        #print(client_state)
     else:
         print("checkpoint_dir is None")
         client_state = None
@@ -1043,14 +809,6 @@ if __name__ == "__main__":
 
                     batch = _get_input_dict(batch)
                     outputs = model(**batch)
-                    # print(outputs.loss, outputs.logits.shape,type(outputs))
-                    # kl_index = torch.tensor(-2)
-                    # res, pre = outputs.logits[:,kl_index,:]
-                    # kl_loss = F.kl_div(res.softmax(dim=-1).log(), pre.softmax(dim=-1), reduction='sum')
-                    # kl_loss = F.kl_div(F.log_softmax(res, dim=-1), F.softmax(pre, dim=-1), reduction='sum')
-                    # print(outputs.loss.shape, kl_loss.shape)
-                    
-                    # loss = outputs.loss + args.theta*kl_loss
                     loss = outputs.loss
                     
                     
@@ -1061,7 +819,6 @@ if __name__ == "__main__":
 
                 model.backward(loss)
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip_norm)
-                # model.clip_fp32_grad_norm(args.clip_norm)
                 model.step()
                     
                 current_loss = loss.item()
@@ -1091,7 +848,6 @@ if __name__ == "__main__":
                                 outputs = model.generate(
                                     **eval_batch,
                                     num_beams=args.num_beams,
-                                    # max_length=max_length_this_batch + args.max_length,
                                     max_length=args.max_length,
                                     do_sample=args.do_sample,
                                     top_p=args.top_p,
@@ -1177,22 +933,22 @@ if __name__ == "__main__":
                         if best_f1_score < score['F1_SA']:
                             best_dir = os.path.join(args.output_dir, "best")
                             if os.path.exists(best_dir):
-                                shutil.rmtree(best_dir)
+                               shutil.rmtree(best_dir)
                             best_f1_score = score['F1_SA']
                             tokenizer.save_pretrained(best_dir)
                             config.save_pretrained(best_dir)
                             args.save(best_dir)
                             model.save_checkpoint(best_dir,
-                                client_state={
-                                    "epoch": epoch+1,
-                                    "step": step,
-                                    "global_steps": global_steps,
-                                    "best_f1_score": best_f1_score,
-                                    "f1_scores": f1_scores,
-                                })
+                               client_state={
+                                   "epoch": epoch+1,
+                                   "step": step,
+                                   "global_steps": global_steps,
+                                   "best_f1_score": best_f1_score,
+                                   "f1_scores": f1_scores,
+                               })
 
                             with open(os.path.join(best_dir, "deepspeed_config.json"), 'w', encoding='utf-8') as f:
-                                f.write(json.dumps(deepspeed_config, indent=5))
+                               f.write(json.dumps(deepspeed_config, indent=5))
                         print(f'best_f1: {best_f1_score}')
                         current_f1 = score['F1_SA']
                         print(f'current_f1: {current_f1}')
@@ -1207,14 +963,16 @@ if __name__ == "__main__":
                         model.save_checkpoint(args.output_dir)
                         with open(os.path.join(args.output_dir, "deepspeed_config.json"), 'w', encoding='utf-8') as f:
                             f.write(json.dumps(deepspeed_config, indent=5))
-                    #model.save_checkpoint(args.output_dir,
-                    #    client_state={
-                    #        "epoch": epoch+1,
-                    #        "step": step,
-                    #        "global_steps": global_steps,
-                    #        "best_f1_score": best_f1_score,
-                    #        "f1_scores": f1_scores,
-                    #    })
+                    
+                    if args.save_training_checkpoint:
+                        model.save_checkpoint(args.output_dir,
+                        client_state={
+                            "epoch": epoch+1,
+                            "step": step,
+                            "global_steps": global_steps,
+                            "best_f1_score": best_f1_score,
+                            "f1_scores": f1_scores,
+                        })
                     model.train()
                     should_save = False            
             
@@ -1222,45 +980,46 @@ if __name__ == "__main__":
     if not args.do_train and args.do_eval:
         # model starts to evaluation
         model.eval()
-        targets = list(df_dev["output"])
+        has_targets = "output" in df_dev.columns
+        targets = list(df_dev["output"]) if has_targets else None
         eval_sampler = SequentialSampler(dev_dataset)
         eval_dataloader = DataLoader(dev_dataset, batch_size=args.eval_batch_size, sampler=eval_sampler, collate_fn=dev_collator, num_workers=8)
         all_outputs = []
-
+        all_ids = []
+        
         preds_for_eval_path = os.path.join(args.output_dir, f"preds_for_eval.text")
         print("\n*****    Evaluating  *****\n")
         eval_inputs_iter = []
         for eval_step, eval_batch in enumerate(tqdm(eval_dataloader)):
-            eval_batch = eval_batch.to(device)
+            if "id" in eval_batch:
+                all_ids.extend(eval_batch["id"])
+            eval_batch = _get_input_dict(eval_batch)
             eval_inputs_iter.extend(eval_batch["input_ids"])
             max_length_this_batch = eval_batch["input_ids"].size(-1) if args.model_type == "decoder" else 0
             with torch.no_grad():
-                if "chatglm" in args.model_name_or_path:
-                    outputs = model.generate(
-                        **eval_batch,
-                        num_beams=args.num_beams,
-                        # max_length=max_length_this_batch + args.max_length,
-                        max_length=args.max_length,
-                        do_sample=args.do_sample,
-                        top_p=args.top_p,
-                        top_k=args.top_k,
-                    )
-                else:
-                    if "token_type_ids" in eval_batch:
-                        token_type_ids = eval_batch.pop("token_type_ids")
-                    outputs = model.generate(
-                        **eval_batch,
-                        num_beams=args.num_beams,
-                        top_k=args.top_k,
-                        top_p=args.top_p,
-                        # early_stopping=True,
-                        # max_length=max_length_this_batch + args.max_length,
-                        max_new_tokens=5,
-                        #length_penalty=0.1,
-                        repetition_penalty=1.0,
-                        num_return_sequences=1
-                        # stopping_criteria=StoppingCriteriaList([stop_criteria])
-                    )
+                if "token_type_ids" in eval_batch:
+                    token_type_ids = eval_batch.pop("token_type_ids")
+                outputs = model.generate(
+                    **eval_batch,
+                    # --- DETERMINISTIC & FAST ---
+                    do_sample=False,          # Greedy decoding (Fastest)
+                    num_beams=1,              # No beam search overhead
+                    temperature=None,         # Not needed when do_sample=False
+                    top_k=None,               # Not needed when do_sample=False
+                    top_p=None,               # Not needed when do_sample=False
+                    
+                    # --- LENGTH CONTROLS ---
+                    max_new_tokens=10,        # Just enough for "angry", "happy", etc.
+                    min_new_tokens=1,         # Force at least one word
+                    
+                    # --- STOPPING CONDITIONS ---
+                    pad_token_id=tokenizer.pad_token_id,
+                    eos_token_id=tokenizer.eos_token_id, # CRITICAL: Ensures it stops at the end of the word
+                    
+                    # --- PENALTIES ---
+                    repetition_penalty=1.0,   # No penalty needed for single-word labels
+                    length_penalty=1.0        # No penalty needed
+                )
             outputs[outputs[:, :] < 0] = tokenizer.pad_token_id
             all_outputs.extend(outputs)
         eval_inputs_iter = [tokenizer.decode(e_id, skip_special_tokens=True, clean_up_tokenization_spaces=True) for e_id in eval_inputs_iter]
@@ -1283,39 +1042,45 @@ if __name__ == "__main__":
 
             this_eval_instance = {
                 "index": index,
+                "id": all_ids[index] if len(all_ids) > 0 else None,
                 "input": this_input,
-                "output": answer, 
-                "target": targets[index],
+                "output": answer
             }
+            if has_targets:
+                this_eval_instance["target"] = targets[index]
+                
             preds_for_eval.append(this_eval_instance)
 
         preds = []
         golds = []
-        # confuse_index = len(emotional_label_dict)
-        # bad_case = []
         confuse_case = []
-        for index, answer in enumerate(all_answers):
-            golds += [emotional_label_dict[targets[index]]]
-            match_res = match_text(answer, list(emotional_label_dict.keys()))
-            if match_res:
-                preds += [emotional_label_dict[match_res[0]]]
-            else:
-                # preds += [confuse_index]
-                preds += [emotional_label_dict[optimize_output(answer, list(emotional_label_dict.keys()))]]
-                confuse_case += [index]
-        
-        if len(preds) == len(all_answers):
-            score, res_matrix = report_score(dataset=args.dataset, golds=golds, preds=preds)
-            eval_score_list.append(score)
+        if has_targets:
+            for index, answer in enumerate(all_answers):
+                golds += [emotional_label_dict[targets[index]]]
+                match_res = match_text(answer, list(emotional_label_dict.keys()))
+                if match_res:
+                    preds += [emotional_label_dict[match_res[0]]]
+                else:
+                    # preds += [confuse_index]
+                    preds += [emotional_label_dict[optimize_output(answer, list(emotional_label_dict.keys()))]]
+                    confuse_case += [index]
+            
+            if len(preds) == len(all_answers):
+                score, res_matrix = report_score(dataset=args.dataset, golds=golds, preds=preds)
+                eval_score_list.append(score)
 
-        # statisics of model's output
+            # statisics of model's output
     
-        with open(preds_for_eval_path, 'w', encoding='utf-8') as f:
-            f.write(json.dumps(score))
-            f.write(f'\n{res_matrix}')
-            f.write(f'\nconfuse_case: {confuse_case}  \n')
-            f.write(f'\nThe num of confuse_case is : {len(confuse_case)} \n')
-            f.write(json.dumps(preds_for_eval, indent=5, ensure_ascii=False))
+            with open(preds_for_eval_path, 'w', encoding='utf-8') as f:
+                f.write(json.dumps(score))
+                f.write(f'\n{res_matrix}')
+                f.write(f'\nconfuse_case: {confuse_case}  \n')
+                f.write(f'\nThe num of confuse_case is : {len(confuse_case)} \n')
+                f.write(json.dumps(preds_for_eval, indent=5, ensure_ascii=False))
 
+        else:
+            with open(preds_for_eval_path, 'w', encoding='utf-8') as f:
+                f.write(json.dumps(preds_for_eval, indent=5, ensure_ascii=False))
+                
     for i in eval_score_list:
         print(i)

@@ -15,10 +15,14 @@ from transformers import (
 )
 import json
 
+'''Citation: https://arxiv.org/pdf/2203.07378'''
+
 # Load Pretrained Components
-model_name = 'audeering/wav2vec2-large-robust-12-ft-emotion-msp-dim'
-data_path = '../iemocap_data_multiple'
-dataset = 'iemocap'
+# model_name = 'audeering/wav2vec2-large-robust-12-ft-emotion-msp-dim'
+# data_path = '../iemocap_data_multiple'
+# dataset = 'iemocap'
+
+
 # ---------------------------------------------------------
 # 1. LOSS FUNCTION (Concordance Correlation Coefficient)
 # ---------------------------------------------------------
@@ -118,9 +122,6 @@ class EmotionModel(Wav2Vec2PreTrainedModel):
 # ---------------------------------------------------------
 class VADDataset(Dataset):
     def __init__(self, data_list, processor, sampling_rate=16000):
-        """
-        data_list: List of dicts [{'path': '/path/to/audio.wav', 'labels': [A, D, V]}]
-        """
         self.data_list = data_list
         self.processor = processor
         self.sampling_rate = sampling_rate
@@ -163,60 +164,67 @@ class DataCollatorWithPadding:
 # ---------------------------------------------------------
 # 4. TRAINING SETUP
 # ---------------------------------------------------------
+    
+def train_audeering(model_name, data_path, dataset, generate_oof=True):
+    if generate_oof:
+        ses_list = range(1,6)
+    else:
+        ses_list = [5]
+        
+    for ses in ses_list:
+        processor = Wav2Vec2Processor.from_pretrained(model_name)
+        model = EmotionModel.from_pretrained(model_name)
+        with open(f'{data_path}/train_vad_ready_sess{ses}.json') as f:
+            train_data = json.load(f)
 
-for ses in range(1,6):
-    processor = Wav2Vec2Processor.from_pretrained(model_name)
-    model = EmotionModel.from_pretrained(model_name)
-    with open(f'{data_path}/train_vad_ready_sess{ses}.json') as f:
-        train_data = json.load(f)
+        with open(f'{data_path}/test_vad_ready_sess{ses}.json') as f:
+            eval_data = json.load(f)
 
-    with open(f'{data_path}/test_vad_ready_sess{ses}.json') as f:
-        eval_data = json.load(f)
+        train_dataset = VADDataset(train_data, processor)
+        eval_dataset = VADDataset(eval_data, processor)
+        data_collator = DataCollatorWithPadding(processor=processor)
 
-    train_dataset = VADDataset(train_data, processor)
-    eval_dataset = VADDataset(eval_data, processor)
-    data_collator = DataCollatorWithPadding(processor=processor)
+        # Metrics
+        def compute_metrics(p: EvalPrediction):
+            #preds = p.predictions
+            preds = p.predictions[0] if isinstance(p.predictions, tuple) else p.predictions
 
-    # Metrics
-    def compute_metrics(p: EvalPrediction):
-        #preds = p.predictions
-        preds = p.predictions[0] if isinstance(p.predictions, tuple) else p.predictions
+            labels = p.label_ids
+            # Simple MSE for logging (Loss handles CCC)
+            mse = ((preds - labels)**2).mean().item()
+            return {"mse": mse}
 
-        labels = p.label_ids
-        # Simple MSE for logging (Loss handles CCC)
-        mse = ((preds - labels)**2).mean().item()
-        return {"mse": mse}
+        # Training Arguments
+        training_args = TrainingArguments(
+            output_dir=f"../checkpoints/wav2vec2_vad_{dataset}_finetuned_sess{ses}",
+            per_device_train_batch_size=8,
+            per_device_eval_batch_size=8,
+            gradient_accumulation_steps=4,
+            eval_strategy="steps",
+            num_train_epochs=5,
+            fp16=True if torch.cuda.is_available() else False,
+            #fp16=False,
+            save_steps=100,
+            eval_steps=100,
+            logging_steps=50,
+            learning_rate=1e-4, # Higher LR for the head
+            save_total_limit=1,
+            remove_unused_columns=False,
+            label_names=["labels"],
+            load_best_model_at_end=True,
+        )
 
-    # Training Arguments
-    training_args = TrainingArguments(
-        output_dir=f"../wav2vec2_vad_{dataset}_finetuned_sess{ses}",
-        per_device_train_batch_size=8,
-        per_device_eval_batch_size=8,
-        gradient_accumulation_steps=4,
-        eval_strategy="steps",
-        num_train_epochs=5,
-        fp16=True if torch.cuda.is_available() else False,
-        #fp16=False,
-        save_steps=100,
-        eval_steps=100,
-        logging_steps=50,
-        learning_rate=1e-4, # Higher LR for the head
-        save_total_limit=1,
-        remove_unused_columns=False,
-        label_names=["labels"],
-        load_best_model_at_end=True,
-    )
+        trainer = Trainer(
+            model=model,
+            args=training_args,
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
+            tokenizer=processor.feature_extractor,
+            data_collator=data_collator,
+            compute_metrics=compute_metrics
+        )
 
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=train_dataset,
-        eval_dataset=eval_dataset,
-        tokenizer=processor.feature_extractor,
-        data_collator=data_collator,
-        compute_metrics=compute_metrics,
-    )
-
-    # Start Training
-    print("Starting training...")
-    trainer.train()
+        # Start Training
+        print("Starting training...")
+        trainer.train()
+        trainer.save_model(f"../checkpoints/wav2vec2_vad_{dataset}_final_model_ses{ses}")

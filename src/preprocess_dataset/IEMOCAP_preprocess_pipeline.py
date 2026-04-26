@@ -2,11 +2,14 @@ import os
 import re
 import glob
 import pandas as pd
-import soundfile as sf  # library for fast audio processing
+import numpy as np
+import soundfile as sf  
 
 # --- CONFIGURATION ---
-IEMOCAP_ROOT_PATH = "/path/to/SpeechCueLLM-main/IEMOCAP_full_release"
-OUTPUT_CSV_PATH = "iemocap_dataset_vad_duration_full.csv"
+IEMOCAP_TRANSCRIPTION_PATH = "../data/iemocap_dataset/IEMOCAP_full_release/Session*/dialog/transcriptions" 
+
+IEMOCAP_ROOT_PATH = "../data/iemocap_dataset/IEMOCAP_full_release"
+OUTPUT_CSV_PATH = "../data/iemocap_dataset/iemocap_dataset_original.csv"
 
 def parse_iemocap(root_path):
     data = []
@@ -59,7 +62,8 @@ def parse_iemocap(root_path):
                             'emotion': emotion,
                             'valence': val,
                             'arousal': act,
-                            'dominance': dom
+                            'dominance': dom,
+                            'session': session_id
                         }
                     except ValueError:
                         continue
@@ -103,10 +107,8 @@ def parse_iemocap(root_path):
             wav_path = os.path.join(wav_root, video_id, f"{utt_id}.wav")
             
             if os.path.exists(wav_path):
-                # Calculate Duration
                 duration = 0.0
                 try:
-                    # sf.info is very fast as it only reads the header
                     audio_info = sf.info(wav_path)
                     duration = audio_info.duration
                 except Exception as e:
@@ -123,32 +125,81 @@ def parse_iemocap(root_path):
                     "path": os.path.abspath(wav_path),
                     "text": text,
                     "id": utt_id,
-                    "segment id": segment_id,
-                    "video id": video_id
+                    "segment_id": segment_id,
+                    "video_id": video_id
                 })
 
     return pd.DataFrame(data)
 
+def create_order_index(iemocap_root_path):
+    """
+    Parses IEMOCAP transcriptions to create a chronologically sorted index based on conversation files.
+    """
+    data = []
+    transcription_dirs = glob.glob(iemocap_root_path)
+
+    for tdir in transcription_dirs: 
+    # Walk through the dataset structure
+    # Expected structure: SessionX/dialog/transcriptions/
+        for root, dirs, files in os.walk(tdir):
+            for file in files:
+                if file.endswith(".txt") and not file.startswith("."):
+                    
+                    # The filename (minus .txt) is usually the Dialogue_ID
+                    dialogue_id = os.path.splitext(file)[0]
+                    file_path = os.path.join(root, file)
+                    
+                    # We collect all turns for this specific dialogue here
+                    dialogue_turns = []
+                    
+                    with open(file_path, 'r') as f:
+                        for line in f:
+                            # Regex to find: UtteranceID [Start-End]:
+                            # Matches: Ses01F_impro01_F000 [6.2900-8.2350]:
+                            match = re.match(r"(Ses\w+)\s+\[(\d+\.\d+)-(\d+\.\d+)\]:", line)
+                            
+                            if match:
+                                utt_id = match.group(1)
+                                start_time = float(match.group(2))
+                                
+                                dialogue_turns.append({
+                                    "video_id": dialogue_id,
+                                    "id": utt_id,
+                                    "Start_Time": start_time
+                                })
+                    
+                    # SORTING LOGIC:
+                    # 1. Sort this specific dialogue by Start_Time
+                    dialogue_turns.sort(key=lambda x: x["Start_Time"])
+                    
+                    # 2. Add the reset index (0, 1, 2...)
+                    for idx, turn in enumerate(dialogue_turns):
+                        turn["Order_Index"] = idx
+                        data.append(turn)
+
+    return pd.DataFrame(data)
+
+
 if __name__ == "__main__":
-    if not os.path.exists(IEMOCAP_ROOT_PATH):
-        print(f"Error: Directory '{IEMOCAP_ROOT_PATH}' not found.")
-    else:
-        print("Starting IEMOCAP extraction with VAD & Duration...")
-        df = parse_iemocap(IEMOCAP_ROOT_PATH)
-        
-        cols = [
-            "gender", "emotion", "valence", "arousal", "dominance", 
-            "duration", "path", "text", "id", "segment_id", "video_id"
-        ]
-        
-        if not df.empty:
-            df = df[cols]
-            print(f"Extraction complete. Found {len(df)} samples.")
-            
-            # Optional: Print simple stats about duration
-            print(f"Avg Duration: {df['duration'].mean():.2f}s")
-            
-            df.to_csv(OUTPUT_CSV_PATH, index=False)
-            print(f"Saved to {OUTPUT_CSV_PATH}")
-        else:
-            print("No data found.")
+    
+    os.makedirs(IEMOCAP_ROOT_PATH, exist_ok=True)
+    df = parse_iemocap(IEMOCAP_ROOT_PATH)
+    
+    cols = [
+        "gender", "emotion", "valence", "arousal", "dominance", 
+        "duration", "path", "text", "id", "segment_id", "video_id",
+        "session", "split"
+    ]
+    df['split'] = np.where(df['session_id'].between(1, 4), 'train', 'test')
+    df = df[cols]
+    
+    df_order = create_order_index(IEMOCAP_TRANSCRIPTION_PATH)
+    df_final = pd.merge(df, df_order[['id', 'Order_Index']], 
+                on='id', 
+                how='left')
+
+    # Sort by Dialogue ID first, then by the new Order Index
+    df_final = df_final.sort_values(by=['video_id', 'Order_Index'])
+
+    df_final.to_csv(OUTPUT_CSV_PATH, index=False)
+    print(f"Saved to {OUTPUT_CSV_PATH}")

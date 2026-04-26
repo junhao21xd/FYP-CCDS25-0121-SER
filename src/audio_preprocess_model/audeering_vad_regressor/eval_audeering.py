@@ -8,14 +8,14 @@ from torch.utils.data import Dataset, DataLoader
 from transformers import Wav2Vec2Processor, Wav2Vec2PreTrainedModel, Wav2Vec2Model
 from tqdm import tqdm
 from scipy.stats import pearsonr
-import glob
-import os
+
 # --- CONFIGURATION ---
-dataset = 'iemocap'
+# MODEL_PATH = "audeering/wav2vec2-large-robust-12-ft-emotion-msp-dim"
+# EXTRACTOR_PATH = "audeering/wav2vec2-large-robust-12-ft-emotion-msp-dim"
+# dataset = 'msp'
+# data_path = f'../{dataset}_data_multiple'
 
-EXTRACTOR_PATH = "audeering/wav2vec2-large-robust-12-ft-emotion-msp-dim"
-
-BATCH_SIZE = 8                       # Adjust based on your GPU VRAM
+BATCH_SIZE = 8
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 # ---------------------
 
@@ -78,12 +78,26 @@ def concordance_correlation_coefficient(y_true, y_pred):
 
 # 3. DATASET
 class EvalDataset(Dataset):
-    def __init__(self, json_path, processor):
+    def __init__(self, dataset, json_path, processor):
         with open(json_path, 'r') as f:
             self.data = json.load(f)
         self.processor = processor
         self.sr = 16000
-
+        if dataset == 'msp':
+            rename_rules = {
+                'EmoVal': 'valence',
+                'EmoAct': 'arousal',
+                'EmoDom': 'dominance',
+                'audio_filepath': 'path',
+                'major_emotion': 'emotion',
+                'file': 'id'
+            }
+            
+            self.data = [
+                {rename_rules.get(k, k): v for k, v in item.items()} 
+                for item in self.data
+            ]
+        
     def __len__(self):
         return len(self.data)
 
@@ -91,7 +105,6 @@ class EvalDataset(Dataset):
         item = self.data[idx]
         id = item['id']
         path = item['path']
-        labels = item['labels'] # [Arousal, Dominance, Valence]
 
         # LOAD AUDIO
         # Warning: Ensure your paths in JSON are absolute or correct relative to this script
@@ -100,18 +113,21 @@ class EvalDataset(Dataset):
         # Process
         inputs = self.processor(audio, sampling_rate=self.sr, return_tensors="pt")
         
-        return {
+        batch_item = {
             "input_values": inputs.input_values[0],
-            "labels": torch.tensor(labels, dtype=torch.float32),
-            "path": path, # Keep track of filename
+            "path": path, 
             "id": id
         }
+        
+        if 'labels' in item:
+            batch_item["labels"] = torch.tensor(item['labels'], dtype=torch.float32)
+            
+        return batch_item
 
-def collate_fn(batch):
+def collate_fn(EXTRACTOR_PATH, batch):
     # Custom collate to handle padding
     processor = Wav2Vec2Processor.from_pretrained(EXTRACTOR_PATH)
     input_values = [x["input_values"] for x in batch]
-    labels = [x["labels"] for x in batch]
     paths = [x["path"] for x in batch]
     ids = [x["id"] for x in batch]
     
@@ -121,31 +137,39 @@ def collate_fn(batch):
         return_tensors="pt"
     )
     
-    return {
+    batch_dict = {
         "input_values": padded_inputs.input_values,
         "attention_mask": padded_inputs.attention_mask,
-        "labels": torch.stack(labels),
         "paths": paths,
         "ids": ids
     }
-
-# 4. MAIN EVALUATION LOOP
-def evaluate():
-    all_sessions_dfs = []
-    for ses in range(1,6):
-        MODEL_PATH = f"../wav2vec2_vad_{dataset}_finetuned_sess{ses}" 
-        TEST_FILE = f"../{dataset}_data_multiple/test_vad_ready_sess{ses}.json"    # Path to your processed test json
+    
+    if "labels" in batch[0]:
+        labels = [x["labels"] for x in batch]
+        batch_dict["labels"] = torch.stack(labels)
         
-        checkpoints = glob.glob(os.path.join(MODEL_PATH, "checkpoint-*"))
+    return batch_dict
 
+
+def evaluate_audeering(EXTRACTOR_PATH, data_path, dataset, generate_oof=True):
+    vad_output_file = f"{data_path}/{dataset}_vad_eval_predictions.csv"
+    if generate_oof:
+        ses_list = range(1,6)
+    else:
+        ses_list = [5]
+    all_sessions_dfs = []
+    for ses in ses_list:
+        MODEL_PATH = f"../checkpoints/wav2vec2_vad_{dataset}_final_model_ses{ses}" 
+        TEST_FILE = f"{data_path}/test_vad_ready_sess{ses}.json"    # Path to your processed test json
+        
         print(f"Loading model from {MODEL_PATH}...")
         processor = Wav2Vec2Processor.from_pretrained(EXTRACTOR_PATH)
-        model = EmotionModel.from_pretrained(checkpoints[0]).to(DEVICE)
+        model = EmotionModel.from_pretrained(MODEL_PATH).to(DEVICE)
         model.eval()
 
         print(f"Loading test data from {TEST_FILE}...")
-        dataset = EvalDataset(TEST_FILE, processor)
-        dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, collate_fn=collate_fn)
+        custom_dataset = EvalDataset(dataset, TEST_FILE, processor)
+        dataloader = DataLoader(custom_dataset, batch_size=BATCH_SIZE, collate_fn=lambda b: collate_fn(EXTRACTOR_PATH, b))
 
         # Storage for results
         all_ids = []
@@ -205,7 +229,7 @@ def evaluate():
         final_report = "\n".join(output_str)
         print(final_report)
         
-        report_path = f"../{dataset}_result/score_summary_sess{ses}.txt"
+        report_path = f"{data_path}/score_summary_sess{ses}.txt"
         with open(report_path, "w") as f:
             f.write(final_report)
         print(f"Saved score summary to {report_path}")
@@ -224,9 +248,69 @@ def evaluate():
         })
         all_sessions_dfs.append(df)
     
-    full_df = pd.concat(all_sessions_dfs, ignore_index=True)    
-    full_df.to_csv("../{dataset}_result/{dataset}_predictions_full.csv", index=False)
+    full_df = pd.concat(all_sessions_dfs, ignore_index=True)   
+    full_df.to_csv(vad_output_file, index=False)
     print("\npredictions saved")
+    
+    return vad_output_file
 
-if __name__ == "__main__":
-    evaluate()
+def inference_audeering(EXTRACTOR_PATH, data_path, dataset, generate_oof=True):
+    vad_output_file = f"{data_path}/{dataset}_vad_predictions.csv"
+    if generate_oof:
+        ses_list = range(1,6)
+    else:
+        ses_list = [5]
+    all_sessions_dfs = []
+    for ses in ses_list:
+        MODEL_PATH = f"../checkpoints/wav2vec2_vad_{dataset}_final_model_ses{ses}" 
+        TEST_FILE = f"{data_path}/test_vad_ready_sess{ses}.json"    # Path to your processed test json
+        
+        print(f"Loading model from {MODEL_PATH}...")
+        processor = Wav2Vec2Processor.from_pretrained(EXTRACTOR_PATH)
+        model = EmotionModel.from_pretrained(MODEL_PATH).to(DEVICE)
+        model.eval()
+
+        print(f"Loading test data from {TEST_FILE}...")
+        custom_dataset = EvalDataset(dataset, TEST_FILE, processor)
+        dataloader = DataLoader(custom_dataset, batch_size=BATCH_SIZE, collate_fn=lambda b: collate_fn(EXTRACTOR_PATH, b))
+
+        # Storage for results
+        all_ids = []
+        all_preds = []
+        all_paths = []
+
+        print("Running Inference...")
+        with torch.no_grad():
+            for batch in tqdm(dataloader):
+                input_values = batch["input_values"].to(DEVICE)
+                attention_mask = batch["attention_mask"].to(DEVICE)
+                paths = batch["paths"]
+                ids = batch["ids"]
+                # Forward pass
+                logits = model(input_values, attention_mask=attention_mask)
+                preds = logits.cpu().numpy()
+
+                all_preds.append(preds)
+                all_paths.extend(paths)
+                all_ids.extend(ids)
+                
+        # Concatenate all batches
+        all_preds = np.vstack(all_preds)
+
+    
+        # 6. SAVE PREDICTIONS TO CSV
+        df = pd.DataFrame({
+            "session": ses,
+            "id": all_ids,
+            "path": all_paths,
+            "pred_arousal": all_preds[:, 0],
+            "pred_dominance": all_preds[:, 1],
+            "pred_valence": all_preds[:, 2]
+        })
+        all_sessions_dfs.append(df)
+    
+    full_df = pd.concat(all_sessions_dfs, ignore_index=True)    
+    full_df.to_csv(vad_output_file, index=False)
+    
+    print("\npredictions saved")
+    return vad_output_file
