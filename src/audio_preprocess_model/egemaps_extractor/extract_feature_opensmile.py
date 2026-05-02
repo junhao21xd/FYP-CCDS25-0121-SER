@@ -12,10 +12,12 @@ def extract_feature_opensmile(dataset, data_path, audio_folder=None):
     )
 
     # Folder with your audio files
-    if dataset == 'iemocap' and audio_folder is None:
-        audio_folder = "../data/iemocap_dataset/IEMOCAP_full_release/Session*/sentences/wav/*/*.wav"
-    elif dataset == 'msp' and audio_folder is None:
-        audio_folder = "../data/msp_dataset/wav_outpus/*.wav"
+    if audio_folder is None:
+        if dataset == 'iemocap':
+            audio_folder = "../data/iemocap_dataset/IEMOCAP_full_release/Session*/sentences/wav/*/*.wav"
+        elif dataset == 'msp':
+            audio_folder = "../data/msp_dataset/wav_outpus/*.wav"
+
 
     data_df = pd.read_csv(data_path)
 

@@ -1,7 +1,18 @@
-# The Shellparameter that controls the mainprocess
-FLAG=1
-# bash train_and_inference.sh
-# Please adjust the following parameters according to your needs. Rememeber to update the MODELPATH for each LLM model.
+#!/bin/bash
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+echo "$SCRIPT_DIR"
+cd "$SCRIPT_DIR"
+
+export PYTHONPATH="$SRCIPT_DIR:$PYTHONPATH"
+
+export CC=$(which gcc)
+export CXX=$(which g++)
+# export CUDA_VISIBLE_DEVICES=0
+
+source activate venv_llm
 
 # ------  select basemodel ----------
 MODEL_NAME='LLaMA3-instruct'
@@ -62,7 +73,7 @@ DATA_PATH="../data/${dataset}_dataset/"
 # -----------------------------------------------------------------------------
 
 case ${MODEL_NAME} in
-'ChatGLM'|'ChatGLM2'|'LLaMA'|'LLaMA2'|'LLaMA3'|'LLaMA3-instruct'|'LLaMA3-instruct-70b'|'Bloom-560m'|'Phi3-medium')
+'LLaMA3-instruct'|'LLaMA3-instruct-70b')
     case ${Experiments_setting} in
     'zero_shot'|'lora_training'|'inference')
         case ${dataset} in
@@ -154,11 +165,8 @@ then
         echo -e "Your choose is not in MY candidations! Please CHECK your Experiments Setting!"
     fi
 
-    export CUDA_VISIBLE_DEVICES=0
-    VENV_LLM="../venv_llm/bin/python3"
-
     echo "Processed Data_Path: $DATA_PATH"
-    "$VENV_LLM" deepspeed --master_port=${port} main.py \
+    deepspeed --master_port=${port} LLM_code/main.py \
     --dataset ${dataset} \
     --model_name_or_path ${MODEL_PATH} \
     --data_dir ${DATA_PATH} \
@@ -169,7 +177,7 @@ then
     --gradient_accumulation_steps ${accumulations} \
     --eval_batch_size 8 \
     --num_train_epochs ${num_train_epochs} \
-    --save_steps 900 \
+    --save_steps 100 \
     --lora ${LORA}\
     --learning_rate ${LR} \
     --lora_dim ${LORA_DIM} \
@@ -180,6 +188,6 @@ then
     --do_eval ${DO_EVAL} \
     --data_percent ${data_percent} \
     --seed ${SEED} \
-    --zero_shot ${ZERO_SHOT} \
-    --checkpoint_dir ${checkpoint_dir}
+    --zero_shot ${ZERO_SHOT}
+    #--checkpoint_dir ${checkpoint_dir}
 fi

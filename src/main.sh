@@ -3,14 +3,15 @@
 # Exit immediately if any command fails
 set -e
 
+source activate venv_audio
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
 # ==============================================================================
 # 1. USER CONFIGURATION
 # Modify the variables below to change the behavior of the Python scripts.
 # ==============================================================================
-
-# --- Virtual Environment Paths ---
-VENV_AUDIO="../venv_audio/bin/python3"
-
 # --- Args ---
 DATASET="iemocap"
 #DATASET="msp"
@@ -29,8 +30,9 @@ VAD_OUTPUT_PATH="../data/${DATASET}_dataset/${DATASET}_audeering_data_multiple"
 COMBINED_OUTPUT_CSV="../data/${DATASET}_dataset/${DATASET}_dataset_processed.csv"
 
 # --- Args for egemaps extractor ---
-FEATURE_EXTRACTION_INPUT_CSV=$COMBINED_OUTPUT_CSV
-FEATURE_INPUT_CSV="../data/${DATASET}_dataset/${DATASET}_dataset_original_egemaps_features.csv"
+# FEATURE_EXTRACTION_INPUT_CSV=$COMBINED_OUTPUT_CSV
+FEATURE_EXTRACTION_INPUT_CSV=$ORIGINAL_CSV
+FEATURE_INPUT_CSV="../data/${DATASET}_dataset/${DATASET}_dataset_egemaps_features.csv"
 FEATURE_OUTPUT_PATH="../data/${DATASET}_dataset"
 
 # --- Args for run_asr.py ---
@@ -40,18 +42,10 @@ ASR_MODEL_ID="openai/whisper-large-v3-turbo"
 ASR_TEST_INPUT_JSON="../data/${DATASET}_dataset/test.json"
 ASR_TEST_OUTPUT_JSON=$ASR_TEST_INPUT_JSON
 
-
 # ==============================================================================
-# 2. ENVIRONMENT SETUP
+# 2. SCRIPT EXECUTION
 # ==============================================================================
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
-
-# ==============================================================================
-# 3. SCRIPT EXECUTION
-# ==============================================================================
-"$VENV_AUDIO" main_preprocess_pipeline.py \
+python main_preprocess_pipeline.py \
     --dataset "$DATASET" \
     --original_csv "$ORIGINAL_CSV" \
     --train_gender_classifier \
@@ -64,7 +58,7 @@ cd "$SCRIPT_DIR"
     --vad_input_csv "$VAD_INPUT_CSV" \
     --vad_output_path "$VAD_OUTPUT_PATH" \
     --combine_files \
-    --combine_output_csv "$COMBINED_OUTPUT_CSV" \
+    --combined_output_csv "$COMBINED_OUTPUT_CSV" \
     --run_extractor \
     --feature_extraction_input_csv "$FEATURE_EXTRACTION_INPUT_CSV" \
     --process_audio_feature \
@@ -74,10 +68,3 @@ cd "$SCRIPT_DIR"
     --asr_model_id "$ASR_MODEL_ID" \
     --asr_test_input_json "$ASR_TEST_INPUT_JSON" \
     --asr_test_output_json "$ASR_TEST_OUTPUT_JSON"
-    
-
-# Train LLM
-bash ./LLM_code/main_llm.sh "$DATASET" "lora_training"
-
-# Inference LLM
-bash ./LLM_code/main_llm.sh "$DATASET" "inference"

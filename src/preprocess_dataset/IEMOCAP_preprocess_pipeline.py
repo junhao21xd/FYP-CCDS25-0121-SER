@@ -122,6 +122,7 @@ def parse_iemocap(root_path):
                     "arousal": meta['arousal'],
                     "dominance": meta['dominance'],
                     "duration": duration,
+                    "session": meta['session'],
                     "path": os.path.abspath(wav_path),
                     "text": text,
                     "id": utt_id,
@@ -190,7 +191,7 @@ if __name__ == "__main__":
         "duration", "path", "text", "id", "segment_id", "video_id",
         "session", "split"
     ]
-    df['split'] = np.where(df['session_id'].between(1, 4), 'train', 'test')
+    df['split'] = np.where(df['session'].between(1, 4), 'train', 'test')
     df = df[cols]
     
     df_order = create_order_index(IEMOCAP_TRANSCRIPTION_PATH)

@@ -231,7 +231,7 @@ def process_audio_feature(dataset, input_csv, output_path):
     
     # Load the dataset
     df = pd.read_csv(input_csv)
-    df.rename(columns=FEATURE_RENAMING_MAPS[dataset])
+    df.rename(columns=FEATURE_RENAMING_MAPS[dataset], inplace=True)
     num_classes = 5  
     
     # Extract thresholds and stats based on the training data

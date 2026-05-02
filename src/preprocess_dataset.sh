@@ -3,9 +3,7 @@
 # Exit immediately if any command fails
 set -e
 
-# --- Virtual Environment Paths ---
-VENV_AUDIO="$SCRIPT_DIR/../venv_audio/bin/python3"
-
+source activate venv_audio
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"

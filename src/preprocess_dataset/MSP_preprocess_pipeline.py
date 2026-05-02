@@ -1,46 +1,99 @@
-from datasets import load_dataset, Dataset, ClassLabel, concatenate_datasets
+from datasets import load_dataset, Dataset, ClassLabel, concatenate_datasets, Audio
 from collections import defaultdict
 import os
 import soundfile as sf
 import pandas as pd
 import re
 from tqdm import tqdm
+import io
 
 '''
 Load MSP-Podcast dataset (subset of the original copy) from HuggingFace.
 Recreate the audio array into wav files and save the path and metadata in csv. 
 '''
+
 # Load full dataset
 ds = load_dataset("AbstractTTS/PODCAST", split="train")
 ds = ds.shuffle(seed=42)
 
-wav_dir = "../data/msp_dataset/wav_outputs"
+print("msp successfully downloaded")
+wav_dir = os.path.abspath("../data/msp_dataset/wav_outputs")
 os.makedirs(wav_dir, exist_ok=True)
 
 output_csv = "../data/msp_dataset/msp_dataset_original.csv"
 
-def compute_duration(example):
-    audio_array = example['audio']['array']
-    sampling_rate = example['audio']['sampling_rate']
-    duration = len(audio_array) / sampling_rate
-    return {"duration": duration}
+## Only works if ffmpeg is installed
+#def compute_duration(example):
+#    audio = example['audio']
+#    audio_array = audio['array']
+#    sampling_rate = audio['sampling_rate']
+#    duration = len(audio_array) / sampling_rate
+#    return {"duration": duration}
 
-# Apply to entire dataset
+#def add_path(example):
+#    audio = example['audio']
+#    array = audio['array']
+#    sampling_rate = audio['sampling_rate']
+#    filename = example['id']
+#    filepath = os.path.join(wav_dir, filename)
+#    sf.write(filepath, array, sampling_rate)
+#    return {"path": filepath}
+
+#ds = ds.map(add_path)
+
+def compute_duration(batch):
+    durations = []
+    
+    for audio_data in batch['audio']:    
+        # Scenario B: No path, but we have the raw file bytes
+        if audio_data.get('bytes'):
+            # Wrap the raw bytes in io.BytesIO so soundfile can read the headers
+            virtual_file = io.BytesIO(audio_data['bytes'])
+            info = sf.info(virtual_file)
+            durations.append(info.duration)
+            
+        # Scenario C: Something is broken/missing in this row
+        else:
+            raise ValueError(f"Found a row with missing audio path and bytes! Row contents: {audio_data}")
+
+    return {"duration": durations}
+
+def add_path(example):
+    # 2. Grab the raw file bytes instead of the decoded array
+    audio_bytes = example['audio']['bytes']
+    
+    # 3. Create your filename and path
+    # (Note: make sure your 'id' column actually exists!)
+    filename = f"{example['id']}.wav" 
+    filepath = os.path.join(wav_dir, filename)
+    
+    # 4. Open a new file in "Write Binary" ('wb') mode and dump the bytes
+    if audio_bytes is not None:
+        with open(filepath, 'wb') as f:
+            f.write(audio_bytes)
+    else:
+        raise ValueError(f"No audio bytes found for ID {example['id']}")
+        
+    # Return the new path so it gets saved in your dataset column
+    return {"path": filepath}
+
+ds = ds.cast_column("audio", Audio(decode=False))
+
+# Apply to the dataset
 ds = ds.map(compute_duration, batched=True, batch_size=1000)
 
 # Initialize counters and containers
 emotion_indices = defaultdict(list)
 emotion_durations = defaultdict(float)  # in seconds
-# emotion_samples = defaultdict(list)
 
 TARGET_DURATION = 3600  # 1 hour
 
 # Collect up to 1 hour per emotion
-for i, row in tqdm(ds,total=len(ds)):
+for i, row in tqdm(enumerate(ds), total=len(ds)):
     emotion = row['major_emotion']
 
     if emotion_durations[emotion] < TARGET_DURATION:
-        emotion_durations[emotion] += row['duration'] # No audio decoding here!
+        emotion_durations[emotion] += row['duration']
         emotion_indices[emotion].append(i)
 
 all_indices = [idx for indices in emotion_indices.values() for idx in indices]
@@ -94,15 +147,6 @@ test_ds = split_dataset['test'].add_column("split", ["test"] * len(split_dataset
 
 ds = concatenate_datasets([train_ds, test_ds])
 
-def add_path(example):
-    audio = example['audio']
-    array = audio['array']
-    sampling_rate = audio['sampling_rate']
-    filename = example['id']
-    filepath = os.path.join(wav_dir, filename)
-    sf.write(filepath, array, sampling_rate)
-    return {"path": filepath}
-
 ds = ds.map(add_path)
 
 ds = ds.remove_columns("audio")
@@ -154,4 +198,4 @@ cols = [
         "gender", "emotion", "valence", "arousal", "dominance", 
         "duration", "path", "text", "id", "split"
     ]
-df.to_csv(output_csv,index=False)
+df[cols].to_csv(output_csv,index=False)
