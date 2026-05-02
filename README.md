@@ -72,37 +72,52 @@ You must create two separate virtual environments: one for the Audio pipeline an
 
 ### System Level Dependencies
 CUDA Version: 12.4
+
 GCC/G++ Version: 13.1.0 
+
 ### 1a. Setup the Audio Environment
+``` bash
 conda create -n venv_audio python=3.10.20
 conda activate venv_audio
 pip install torch==2.6.0+cu124 torchaudio==2.6.0+cu124 --extra-index-url https://download.pytorch.org/whl/cu124
 pip install -r requirements_audio.txt
-
+```
 
 ### 1b. Setup the LLM Environment
+``` bash
 conda create -n venv_llm python=3.10.20
 conda activate venv_llm
 pip install torch==2.6.0+cu124 torchaudio==2.6.0+cu124 --extra-index-url https://download.pytorch.org/whl/cu124
 pip install ninja==1.13.0
 pip install -r requirements_llm.txt
+```
 
 ### 2. create .env file
 ".env" file save in repo_home/src with the following line
+``` bash
 HF_ACCESS_TOKEN="your_huggingface_token_here" # Allows login to hf to obtain llama model weight
+```
 
 ## Examples
 ### Run dataset preprocessing code to prepare csv for audio pipeline (automatically uses venv_audio)
+``` bash
 bash src/preprocess_dataset.sh
+```
 
 ### Run the audio pipeline (automatically uses venv_audio)
+``` bash
 bash src/main.sh
+```
 
 ### Finetune using LoRA on the IEMOCAP dataset (automatically uses venv_llm)
+``` bash
 bash src/main_llm.sh "iemocap" "lora_training"
+```
 
 ### Run inference/evaluation only on the MSP dataset (automatically uses venv_llm)
+``` bash
 bash src/main_llm.sh "msp" "inference"
+```
 
 ---
 
