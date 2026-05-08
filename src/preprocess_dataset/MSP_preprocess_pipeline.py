@@ -64,7 +64,7 @@ def add_path(example):
     
     # 3. Create your filename and path
     # (Note: make sure your 'id' column actually exists!)
-    filename = f"{example['id']}.wav" 
+    filename = example['id'] 
     filepath = os.path.join(wav_dir, filename)
     
     # 4. Open a new file in "Write Binary" ('wb') mode and dump the bytes
