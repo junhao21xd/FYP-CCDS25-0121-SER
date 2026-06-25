@@ -55,6 +55,9 @@ python main_preprocess_pipeline.py \
     --preprocess_vad_data \
     --train_vad_regressor \
     --eval_vad_regressor \
+    --generate_oof_prep \
+    --generate_oof_train \
+    --generate_oof_eval \
     --vad_input_csv "$VAD_INPUT_CSV" \
     --vad_output_path "$VAD_OUTPUT_PATH" \
     --combine_files \

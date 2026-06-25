@@ -81,7 +81,7 @@ def train_gender_classifier(dataset, data_path, feature_extractor_path, model_ch
         id2label=id2label
     )
 
-    current_config = GENDER_CLASSIFIER_CONFIGS.get(dataset, GENDER_CLASSIFIER_CONFIGS["DEFAULT"])
+    current_config = GENDER_CLASSIFIER_CONFIGS.get(dataset, GENDER_CLASSIFIER_CONFIGS["default"])
     
     # 9. Define Training Arguments
     training_args = TrainingArguments(

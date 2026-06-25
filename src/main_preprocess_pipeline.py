@@ -22,12 +22,12 @@ def main():
     parser.add_argument("--vad_feature_extractor_path", default="audeering/wav2vec2-large-robust-12-ft-emotion-msp-dim")
     parser.add_argument("--vad_regressor_path", default="audeering/wav2vec2-large-robust-12-ft-emotion-msp-dim")
     parser.add_argument("--preprocess_vad_data", action="store_true")
-    parser.add_argument("--generate_oof_prep", default=True, help="whether to prep 5 fold of train-test data")
+    parser.add_argument("--generate_oof_prep", action="store_true", help="whether to prep 5 fold of train-test data")
     parser.add_argument("--train_vad_regressor", action="store_true")
-    parser.add_argument("--generate_oof_train", default=True, help="whether to train 5 models to obtain the pred of each eval fold")
+    parser.add_argument("--generate_oof_train", action="store_true", help="whether to train 5 models to obtain the pred of each eval fold")
     parser.add_argument("--eval_vad_regressor", action="store_true")
     parser.add_argument("--inference_vad_regressor", action="store_true")
-    parser.add_argument("--generate_oof_eval", default=True, help="whether to eval/inference get Out-of-Fold (OOF) predictions")
+    parser.add_argument("--generate_oof_eval", action="store_true", help="whether to eval/inference get Out-of-Fold (OOF) predictions")
     parser.add_argument("--vad_input_csv", type=str, help="input audio file to regress vad")
     parser.add_argument("--vad_output_path", type=str, help="path that stores vad prediction output file")
     
@@ -88,6 +88,9 @@ def main():
         print("Evaluating VAD")
         vad_output_csv = inference_audeering(args.vad_feature_extractor_path, args.vad_output_path, args.dataset, args.generate_oof_eval)
 
+    else:
+        vad_output_csv = f"{args.vad_output_path}/{args.dataset}_vad_eval_predictions.csv"
+        
     ## Combine files
     if args.combine_files:
         print("Combining Files")

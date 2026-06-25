@@ -512,7 +512,7 @@ class DynamicPromptCollator:
         self.epoch = epoch
 
     def __call__(self, batch):
-        ids = [feature["id"] for feature in batch]
+        ids = [feature.get("id") for feature in batch]
         # 1. Masking Probability (Curriculum Learning)
         if self.mode == 'train':
             mask_prob = min(self.max_mask_prob, self.epoch * (0.20 / 15))
@@ -772,7 +772,7 @@ elif args.do_eval:
     model_engine = deepspeed.init_inference(
         model,
         mp_size=world_size,
-        replace_with_kernel_inject=True,
+        replace_with_kernel_inject=False,
         dtype=dtype,
     )
     model = model_engine.module
