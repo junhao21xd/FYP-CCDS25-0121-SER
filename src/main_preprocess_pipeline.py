@@ -99,12 +99,15 @@ def main():
     ## eGeMaps Feature Extractor
     if args.run_extractor:
         print("Extracting eGeMaps Feature from audio")
-        extract_feature_opensmile(args.dataset, args.feature_extraction_input_csv)
+        feature_extraction_output_csv = extract_feature_opensmile(args.dataset, args.feature_extraction_input_csv)
 
+    else:
+        feature_extraction_output_csv = f"../data/{args.dataset}_dataset/{args.dataset}_dataset_egemaps_features.csv"
+        
     if args.process_audio_feature:
         print("Processing eGeMaps")
-        process_audio_feature(args.dataset, args.combined_output_csv, args.feature_output_path)
-        # process_audio_feature(args.dataset, combined_csv_path, args.feature_output_path, args.use_pred_gender)
+        process_audio_feature(args.dataset, feature_extraction_output_csv, args.feature_output_path)
+        # process_audio_feature(args.dataset, feature_extraction_output_csv, args.feature_output_path, args.use_pred_gender)
     
     ## ASR
     if args.run_asr:

@@ -35,6 +35,9 @@ def extract_feature_opensmile(dataset, data_path, audio_folder=None):
     final_df = data_df.merge(df, on='id', how='inner')
     final_df.reset_index(drop=True, inplace=True)
 
-    final_df.to_csv(f"../data/{dataset}_dataset/{dataset}_dataset_egemaps_features.csv", index=False)
+    output_csv = f"../data/{dataset}_dataset/{dataset}_dataset_egemaps_features.csv"
+    final_df.to_csv(output_csv, index=False)
 
     print("Features extracted and saved to egemaps_features.csv")
+
+    return output_csv

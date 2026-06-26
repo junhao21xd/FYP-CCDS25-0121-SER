@@ -171,14 +171,18 @@ def prepare_and_save_json(df, dataset, output_path):
     final_columns['emotion'] = 'output'
     final_columns['path'] = 'path'
     final_columns['history_context'] = 'history_context'
-    
-    if 'EmoVal' in df.columns: final_columns['EmoVal'] = 'EmoVal'
-    if 'EmoAct' in df.columns: final_columns['EmoAct'] = 'EmoAct'
-    if 'EmoDom' in df.columns: final_columns['EmoDom'] = 'EmoDom'
 
-    if 'valence' in df.columns: final_columns['valence'] = 'valence'
-    if 'arousal' in df.columns: final_columns['arousal'] = 'arousal'
-    if 'dominance' in df.columns: final_columns['dominance'] = 'dominance'
+    if 'pred_valence' in df.columns: 
+        df.drop(columns=['valence'], inplace=True)
+        final_columns['pred_valence'] = 'valence'
+        
+    if 'pred_arousal' in df.columns: 
+        df.drop(columns=['arousal'], inplace=True)
+        final_columns['pred_arousal'] = 'arousal'
+        
+    if 'pred_dominance' in df.columns:
+        df.drop(columns=['dominance'], inplace=True)
+        final_columns['pred_dominance'] = 'dominance'
     
     # 2b. Add Acoustic columns (and ensure they exist)
     for group, features in group_order.items():
