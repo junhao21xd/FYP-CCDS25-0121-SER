@@ -2,7 +2,7 @@
 transformers==4.42.4
 deepspeed==0.18.9
 peft==0.11.1
-huggingface-hub==1.12.0
+huggingface-hub==0.36.0
 accelerate==1.13.0
 
 # --- Acceleration & Kernels ---
@@ -10,7 +10,7 @@ triton==3.2.0
 
 # --- Data Science & Audio ---
 pandas==2.3.3
-numpy==2.2.6
+numpy==2.2.6 # 1.26.4
 scikit-learn==1.7.2
 opensmile==2.6.0
 
